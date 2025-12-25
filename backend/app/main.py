@@ -1,8 +1,18 @@
 from fastapi import FastAPI
 from sqlalchemy import text
-from .db import engine
+
+from .db import engine, Base
 
 app = FastAPI(title="Job Application Tracker")
+
+
+@app.on_event("startup")
+def on_startup():
+    # Import models so they are registered with SQLAlchemy
+    from .models import user  # noqa: F401
+
+    # Create tables if they do not exist
+    Base.metadata.create_all(bind=engine)
 
 
 @app.get("/health")
@@ -17,5 +27,4 @@ def db_check():
             conn.execute(text("SELECT 1"))
         return {"db": "ok"}
     except Exception as e:
-        # In real app, don't expose full error; this is just for early dev
         return {"db": "error", "detail": str(e)}
