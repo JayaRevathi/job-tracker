@@ -5,7 +5,9 @@ from sqlalchemy.orm import Session
 from .db import engine, Base, get_db
 from .models import user as user_model
 from .schemas.user import UserCreate, UserOut
-from .core.security import hash_password
+from .schemas.auth import LoginRequest, TokenResponse
+from .core.security import hash_password, verify_password, create_access_token
+
 
 app = FastAPI(title="Job Application Tracker")
 
@@ -58,3 +60,23 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
     db.refresh(new_user)
 
     return new_user
+
+@app.post("/auth/login", response_model=TokenResponse)
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    # Find user by email
+    user = (
+        db.query(user_model.User)
+        .filter(user_model.User.email == payload.email)
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    # Verify password
+    if not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    # Create JWT token (subject = user id)
+    access_token = create_access_token(data={"sub": str(user.id)})
+
+    return TokenResponse(access_token=access_token)
