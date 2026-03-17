@@ -11,17 +11,19 @@ function App() {
   const [applications, setApplications] = useState([]);
   const [appsLoading, setAppsLoading] = useState(false);
   const [appsError, setAppsError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
   const [showNewJobForm, setShowNewJobForm] = useState(false);
 
   const [newJobPosition, setNewJobPosition] = useState("");
   const [newJobCompany, setNewJobCompany] = useState("");
   const [newJobStatus, setNewJobStatus] = useState("Applied");
+  const [editingAppId, setEditingAppId] = useState(null);
   const [newJobDate, setNewJobDate] = useState("");
   const [newJobLink, setNewJobLink] = useState("");
   const [newJobNotes, setNewJobNotes] = useState("");
-  const [newJobResume, setNewJobResume] = useState("");
-  const [statusEdits, setStatusEdits] = useState({});
+  const [newJobResumeFile, setNewJobResumeFile] = useState(null);
 
   useEffect(() => {
     if (token) {
@@ -39,6 +41,26 @@ function App() {
       rejected: applications.filter((app) => app.status === "Rejected").length,
     };
   }, [applications]);
+  const filteredApplications = useMemo(() => {
+    const filtered = applications.filter((app) => {
+      const search = searchTerm.toLowerCase();
+  
+      return (
+        app.company?.toLowerCase().includes(search) ||
+        app.position?.toLowerCase().includes(search)
+      );
+    });
+  
+    filtered.sort((a, b) => {
+      if (!a.applied_date && !b.applied_date) return 0;
+      if (!a.applied_date) return 1;
+      if (!b.applied_date) return -1;
+  
+      return new Date(b.applied_date) - new Date(a.applied_date);
+    });
+  
+    return filtered;
+  }, [applications, searchTerm]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -122,23 +144,31 @@ function App() {
     }
 
     setAppsError("");
+    setSuccessMessage("");
 
     try {
-      const response = await fetch("http://localhost:8000/applications", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          position: newJobPosition.trim(),
-          company: newJobCompany.trim(),
-          status: newJobStatus,
-          job_link: newJobLink.trim() || null,
-          notes: newJobNotes.trim() || null,
-          resume_name: newJobResume.trim() || null,
-        }),
-      });
+      const isEditing = editingAppId !== null;
+
+      const response = await fetch(
+        isEditing
+          ? `http://localhost:8000/applications/${editingAppId}`
+          : "http://localhost:8000/applications",
+        {
+          method: isEditing ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            position: newJobPosition.trim(),
+            company: newJobCompany.trim(),
+            status: newJobStatus,
+            applied_date: newJobDate || null,
+            job_link: newJobLink.trim() || null,
+            notes: newJobNotes.trim() || null,
+          }),
+        }
+      );
 
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) {
@@ -147,22 +177,48 @@ function App() {
         throw new Error("Failed to create application");
       }
 
+      const savedApp = await response.json();
+
+      if (!editingAppId && newJobResumeFile) {
+        const formData = new FormData();
+        formData.append("file", newJobResumeFile);
+
+        const uploadResponse = await fetch(
+          `http://localhost:8000/applications/${savedApp.id}/upload-resume`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+            body: formData,
+          }
+        );
+
+        if (!uploadResponse.ok) {
+          throw new Error("Job saved, but resume upload failed");
+        }
+      }
+
       setNewJobPosition("");
       setNewJobCompany("");
       setNewJobStatus("Applied");
       setNewJobDate("");
       setNewJobLink("");
       setNewJobNotes("");
-      setNewJobResume("");
+      setNewJobResumeFile(null);
       setShowNewJobForm(false);
+      setEditingAppId(null);
+      setSuccessMessage(editingAppId ? "Job updated successfully" : "Job added successfully");
 
       await fetchApplications(statusFilter);
     } catch (err) {
       setAppsError(err.message || "Error creating application");
     }
   };
-
   const handleDeleteApplication = async (applicationId) => {
+    const confirmed = window.confirm("Are you sure you want to delete this job?");
+    if (!confirmed) return;
+  
     try {
       const response = await fetch(`http://localhost:8000/applications/${applicationId}`, {
         method: "DELETE",
@@ -170,27 +226,31 @@ function App() {
           Authorization: `Bearer ${token}`,
         },
       });
-
+  
       if (!response.ok) {
         throw new Error("Failed to delete application");
       }
-
+  
+      setSuccessMessage("Job deleted successfully");
       await fetchApplications(statusFilter);
     } catch (err) {
       setAppsError(err.message || "Error deleting application");
+      setSuccessMessage("Job deleted successfully");
     }
   };
 
-  const handleStatusChange = (applicationId, value) => {
-    setStatusEdits((prev) => ({
-      ...prev,
-      [applicationId]: value,
-    }));
+  const handleEditApplication = (app) => {
+    setEditingAppId(app.id);
+    setNewJobCompany(app.company || "");
+    setNewJobPosition(app.position || "");
+    setNewJobStatus(app.status || "Applied");
+    setNewJobDate(app.applied_date ? app.applied_date.split("T")[0] : "");
+    setNewJobLink(app.job_link || "");
+    setNewJobNotes(app.notes || "");
+    setShowNewJobForm(true);
   };
 
-  const handleUpdateStatus = async (app) => {
-    const selectedStatus = statusEdits[app.id] || app.status;
-  
+  const handleUpdateStatus = async (app, selectedStatus) => {
     try {
       const response = await fetch(`http://localhost:8000/applications/${app.id}`, {
         method: "PUT",
@@ -202,16 +262,49 @@ function App() {
           position: app.position,
           company: app.company,
           status: selectedStatus,
+          applied_date: app.applied_date || null,
+          job_link: app.job_link || null,
+          notes: app.notes || null,
+          resume_name: app.resume_name || null,
         }),
       });
-  
+
       if (!response.ok) {
         throw new Error("Failed to update application");
       }
-  
+
       await fetchApplications(statusFilter);
     } catch (err) {
       setAppsError(err.message || "Error updating application");
+    }
+  };
+
+  const handleResumeUpload = async (applicationId, selectedFile) => {
+    if (!selectedFile) return;
+
+    const formData = new FormData();
+    formData.append("file", selectedFile);
+
+    try {
+      const response = await fetch(
+        `http://localhost:8000/applications/${applicationId}/upload-resume`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          body: formData,
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to upload resume");
+      }
+
+      await fetchApplications(statusFilter);
+    } catch (err) {
+      setAppsError(err.message || "Error uploading resume");
+      setSuccessMessage("Resume uploaded successfully");
     }
   };
 
@@ -340,6 +433,7 @@ function App() {
         </div>
 
         <div className="toolbar-row">
+
           <label className="label toolbar-label">
             Status filter
             <select
@@ -354,6 +448,17 @@ function App() {
               <option value="Rejected">Rejected</option>
             </select>
           </label>
+
+          <label className="label toolbar-label">
+            Search
+            <input
+              className="input"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search company or role"
+            />
+          </label>
+
         </div>
 
         {showNewJobForm && (
@@ -416,12 +521,12 @@ function App() {
               </label>
 
               <label className="label">
-                Resume Name
+                Upload Resume (PDF)
                 <input
+                  type="file"
+                  accept=".pdf"
                   className="input"
-                  value={newJobResume}
-                  onChange={(e) => setNewJobResume(e.target.value)}
-                  placeholder="e.g. Revathi_Caterpillar_Resume.pdf"
+                  onChange={(e) => setNewJobResumeFile(e.target.files?.[0] || null)}
                 />
               </label>
 
@@ -439,7 +544,7 @@ function App() {
 
             <div className="job-form-actions">
               <button type="submit" className="button">
-                Save job
+              {editingAppId ? "Update job" : "Save job"}
               </button>
             </div>
           </form>
@@ -447,6 +552,7 @@ function App() {
 
         {appsLoading && <p className="info-text">Loading applications...</p>}
         {appsError && <p className="error-text">{appsError}</p>}
+        {successMessage && <p className="success-text">{successMessage}</p>}
 
         {!appsLoading && applications.length === 0 && !appsError && (
           <div className="empty-state">
@@ -470,7 +576,7 @@ function App() {
                 </tr>
               </thead>
               <tbody>
-                {applications.map((app) => (
+                {filteredApplications.map((app) => (
                   <tr key={app.id}>
                     <td>{app.company}</td>
                     <td>{app.position}</td>
@@ -549,20 +655,19 @@ function App() {
                       <div className="row-actions">
                         <select
                           className="table-select"
-                          value={statusEdits[app.id] || app.status}
-                          onChange={(e) => handleStatusChange(app.id, e.target.value)}
+                          value={app.status}
+                          onChange={(e) => handleUpdateStatus(app, e.target.value)}
                         >
                           <option value="Applied">Applied</option>
                           <option value="Interview">Interview</option>
                           <option value="Offer">Offer</option>
                           <option value="Rejected">Rejected</option>
                         </select>
-
                         <button
                           className="table-action"
-                          onClick={() => handleUpdateStatus(app)}
+                          onClick={() => handleEditApplication(app)}
                         >
-                          Update
+                          Edit
                         </button>
 
                         <button
@@ -583,31 +688,5 @@ function App() {
     </div>
   );
 }
-const handleResumeUpload = async (applicationId, selectedFile) => {
-  if (!selectedFile) return;
 
-  const formData = new FormData();
-  formData.append("file", selectedFile);
-
-  try {
-    const response = await fetch(
-      `http://localhost:8000/applications/${applicationId}/upload-resume`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: formData,
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error("Failed to upload resume");
-    }
-
-    await fetchApplications(statusFilter);
-  } catch (err) {
-    setAppsError(err.message || "Error uploading resume");
-  }
-};
 export default App;
