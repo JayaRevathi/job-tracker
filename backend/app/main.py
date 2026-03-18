@@ -8,6 +8,8 @@ from fastapi.staticfiles import StaticFiles
 import shutil
 import os
 
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
+
 from .db import engine, Base, get_db
 from .models import user as user_model
 from .models.application import Application
@@ -25,8 +27,8 @@ from .core.security import (
 app = FastAPI(title="Job Application Tracker")
 security = HTTPBearer()
 
-os.makedirs("uploads", exist_ok=True)
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # Allow frontend (React) to call this API from http://localhost:5173
 app.add_middleware(
