@@ -1,12 +1,9 @@
-.env
-uploads/
-__pycache__/
-*.pyc
-.DS_Store# Terraform
+# Terraform
 **/.terraform/*
 *.tfstate
 *.tfstate.*
 .terraform.lock.hcl
+terraform.tfvars
 
 # Python
 __pycache__/
@@ -15,3 +12,14 @@ __pycache__/
 # Env files
 .env
 .env.*
+!.env.example
+
+# Uploads
+uploads/
+backend/uploads/
+
+# Node
+node_modules/
+
+# OS files
+.DS_Store
