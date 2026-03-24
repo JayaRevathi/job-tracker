@@ -2,4 +2,16 @@
 uploads/
 __pycache__/
 *.pyc
-.DS_Store
+.DS_Store# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# Python
+__pycache__/
+*.pyc
+
+# Env files
+.env
+.env.*
