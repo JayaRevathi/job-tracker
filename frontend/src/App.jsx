@@ -8,6 +8,11 @@ function App() {
   const [error, setError] = useState("");
   const [token, setToken] = useState(localStorage.getItem("access_token") || "");
 
+  const [mode, setMode] = useState("login");
+  const [regName, setRegName] = useState("");
+  const [regEmail, setRegEmail] = useState("");
+  const [regPassword, setRegPassword] = useState("");
+
   const [applications, setApplications] = useState([]);
   const [appsLoading, setAppsLoading] = useState(false);
   const [appsError, setAppsError] = useState("");
@@ -41,53 +46,149 @@ function App() {
       rejected: applications.filter((app) => app.status === "Rejected").length,
     };
   }, [applications]);
+
   const filteredApplications = useMemo(() => {
     const filtered = applications.filter((app) => {
       const search = searchTerm.toLowerCase();
-  
+
       return (
         app.company?.toLowerCase().includes(search) ||
         app.position?.toLowerCase().includes(search)
       );
     });
-  
+
     filtered.sort((a, b) => {
       if (!a.applied_date && !b.applied_date) return 0;
       if (!a.applied_date) return 1;
       if (!b.applied_date) return -1;
-  
+
       return new Date(b.applied_date) - new Date(a.applied_date);
     });
-  
+
     return filtered;
   }, [applications, searchTerm]);
+
+  const tryLoginForm = async () => {
+    const formData = new URLSearchParams();
+    formData.append("username", email);
+    formData.append("password", password);
+
+    const response = await fetch("http://localhost:8000/auth/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: formData.toString(),
+    });
+
+    if (!response.ok) {
+      throw new Error("Form login failed");
+    }
+
+    return response.json();
+  };
+
+  const tryLoginJson = async () => {
+    const response = await fetch("http://localhost:8000/auth/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        email: email,
+        password: password,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error("JSON login failed");
+    }
+
+    return response.json();
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
+    setSuccessMessage("");
     setLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8000/auth/login", {
+      let data;
+
+      try {
+        data = await tryLoginForm();
+      } catch {
+        data = await tryLoginJson();
+      }
+
+      localStorage.setItem("access_token", data.access_token);
+      setToken(data.access_token);
+    } catch (err) {
+      setError("Invalid email or password");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSuccessMessage("");
+    setLoading(true);
+
+    try {
+      let response = await fetch("http://localhost:8000/auth/register", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          email,
-          password,
+          name: regName,
+          email: regEmail,
+          password: regPassword,
         }),
       });
 
       if (!response.ok) {
-        throw new Error("Invalid email or password");
+        response = await fetch("http://localhost:8000/auth/register", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            full_name: regName,
+            email: regEmail,
+            password: regPassword,
+          }),
+        });
       }
 
-      const data = await response.json();
-      localStorage.setItem("access_token", data.access_token);
-      setToken(data.access_token);
+      if (!response.ok) {
+        response = await fetch("http://localhost:8000/auth/register", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            username: regEmail,
+            email: regEmail,
+            password: regPassword,
+          }),
+        });
+      }
+
+      if (!response.ok) {
+        throw new Error("Registration failed");
+      }
+
+      setSuccessMessage("Account created successfully. Please login.");
+      setMode("login");
+      setRegName("");
+      setRegEmail("");
+      setRegPassword("");
     } catch (err) {
-      setError(err.message || "Login failed");
+      setError(err.message || "Registration failed");
     } finally {
       setLoading(false);
     }
@@ -98,6 +199,7 @@ function App() {
     setToken("");
     setApplications([]);
     setStatusFilter("");
+    setSearchTerm("");
   };
 
   const fetchApplications = async (filter = "") => {
@@ -132,6 +234,17 @@ function App() {
     const value = e.target.value;
     setStatusFilter(value);
     fetchApplications(value);
+  };
+
+  const resetJobForm = () => {
+    setEditingAppId(null);
+    setNewJobCompany("");
+    setNewJobPosition("");
+    setNewJobStatus("Applied");
+    setNewJobDate("");
+    setNewJobLink("");
+    setNewJobNotes("");
+    setNewJobResumeFile(null);
   };
 
   const handleCreateApplication = async (e) => {
@@ -174,7 +287,7 @@ function App() {
         if (response.status === 401 || response.status === 403) {
           throw new Error("Unauthorized. Please login again.");
         }
-        throw new Error("Failed to create application");
+        throw new Error(isEditing ? "Failed to update application" : "Failed to create application");
       }
 
       const savedApp = await response.json();
@@ -199,26 +312,20 @@ function App() {
         }
       }
 
-      setNewJobPosition("");
-      setNewJobCompany("");
-      setNewJobStatus("Applied");
-      setNewJobDate("");
-      setNewJobLink("");
-      setNewJobNotes("");
-      setNewJobResumeFile(null);
+      resetJobForm();
       setShowNewJobForm(false);
-      setEditingAppId(null);
-      setSuccessMessage(editingAppId ? "Job updated successfully" : "Job added successfully");
+      setSuccessMessage(isEditing ? "Job updated successfully" : "Job added successfully");
 
       await fetchApplications(statusFilter);
     } catch (err) {
-      setAppsError(err.message || "Error creating application");
+      setAppsError(err.message || "Error saving application");
     }
   };
+
   const handleDeleteApplication = async (applicationId) => {
     const confirmed = window.confirm("Are you sure you want to delete this job?");
     if (!confirmed) return;
-  
+
     try {
       const response = await fetch(`http://localhost:8000/applications/${applicationId}`, {
         method: "DELETE",
@@ -226,16 +333,15 @@ function App() {
           Authorization: `Bearer ${token}`,
         },
       });
-  
+
       if (!response.ok) {
         throw new Error("Failed to delete application");
       }
-  
+
       setSuccessMessage("Job deleted successfully");
       await fetchApplications(statusFilter);
     } catch (err) {
       setAppsError(err.message || "Error deleting application");
-      setSuccessMessage("Job deleted successfully");
     }
   };
 
@@ -301,10 +407,10 @@ function App() {
         throw new Error("Failed to upload resume");
       }
 
+      setSuccessMessage("Resume uploaded successfully");
       await fetchApplications(statusFilter);
     } catch (err) {
       setAppsError(err.message || "Error uploading resume");
-      setSuccessMessage("Resume uploaded successfully");
     }
   };
 
@@ -337,46 +443,123 @@ function App() {
         </div>
 
         <div className="login-right">
-          <h2 className="login-title">Login to your account</h2>
+          <h2 className="login-title">
+            {mode === "login" ? "Login to your account" : "Create your account"}
+          </h2>
+
           <p className="login-subtitle">
-            Use the credentials you created in the API to sign in.
+            {mode === "login"
+              ? "Login with your email and password."
+              : "Create an account to start tracking your job applications."}
           </p>
 
-          <form onSubmit={handleSubmit} className="form login-form">
-            <label className="label">
-              Email Address
-              <input
-                type="email"
-                className="input"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="Email address"
-                required
-              />
-            </label>
+          {mode === "login" ? (
+            <form onSubmit={handleSubmit} className="form login-form">
+              <label className="label">
+                Email Address
+                <input
+                  type="email"
+                  className="input"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Email address"
+                  required
+                />
+              </label>
 
-            <label className="label">
-              Password
-              <input
-                type="password"
-                className="input"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Password"
-                required
-              />
-            </label>
+              <label className="label">
+                Password
+                <input
+                  type="password"
+                  className="input"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Password"
+                  required
+                />
+              </label>
 
-            {error && <p className="error-text">{error}</p>}
+              {error && <p className="error-text">{error}</p>}
+              {successMessage && <p className="success-text">{successMessage}</p>}
 
-            <button type="submit" className="button" disabled={loading}>
-              {loading ? "Signing in..." : "Sign in"}
-            </button>
+              <button type="submit" className="button" disabled={loading}>
+                {loading ? "Signing in..." : "Sign in"}
+              </button>
 
-            <p className="hint">
-              Register first in Swagger, then come back here to login.
-            </p>
-          </form>
+              <p className="hint">
+                Don&apos;t have an account?{" "}
+                <span
+                  style={{ color: "#0284c7", cursor: "pointer", fontWeight: 600 }}
+                  onClick={() => {
+                    setMode("register");
+                    setError("");
+                    setSuccessMessage("");
+                  }}
+                >
+                  Register
+                </span>
+              </p>
+            </form>
+          ) : (
+            <form onSubmit={handleRegister} className="form login-form">
+              <label className="label">
+                Full Name
+                <input
+                  type="text"
+                  className="input"
+                  value={regName}
+                  onChange={(e) => setRegName(e.target.value)}
+                  placeholder="Full name"
+                  required
+                />
+              </label>
+
+              <label className="label">
+                Email Address
+                <input
+                  type="email"
+                  className="input"
+                  value={regEmail}
+                  onChange={(e) => setRegEmail(e.target.value)}
+                  placeholder="Email address"
+                  required
+                />
+              </label>
+
+              <label className="label">
+                Password
+                <input
+                  type="password"
+                  className="input"
+                  value={regPassword}
+                  onChange={(e) => setRegPassword(e.target.value)}
+                  placeholder="Password"
+                  required
+                />
+              </label>
+
+              {error && <p className="error-text">{error}</p>}
+              {successMessage && <p className="success-text">{successMessage}</p>}
+
+              <button type="submit" className="button" disabled={loading}>
+                {loading ? "Creating..." : "Create Account"}
+              </button>
+
+              <p className="hint">
+                Already have an account?{" "}
+                <span
+                  style={{ color: "#0284c7", cursor: "pointer", fontWeight: 600 }}
+                  onClick={() => {
+                    setMode("login");
+                    setError("");
+                    setSuccessMessage("");
+                  }}
+                >
+                  Login
+                </span>
+              </p>
+            </form>
+          )}
         </div>
       </div>
     );
@@ -396,13 +579,20 @@ function App() {
           <div className="topbar-actions">
             <button
               className="secondary-button"
-              onClick={() => setShowNewJobForm((prev) => !prev)}
+              onClick={() => {
+                setShowNewJobForm((prev) => !prev);
+                if (showNewJobForm) {
+                  resetJobForm();
+                }
+              }}
             >
               {showNewJobForm ? "Close form" : "Add job"}
             </button>
+
             <button className="secondary-button" onClick={() => fetchApplications(statusFilter)}>
               Refresh
             </button>
+
             <button className="secondary-button" onClick={handleLogout}>
               Logout
             </button>
@@ -433,7 +623,6 @@ function App() {
         </div>
 
         <div className="toolbar-row">
-
           <label className="label toolbar-label">
             Status filter
             <select
@@ -458,7 +647,6 @@ function App() {
               placeholder="Search company or role"
             />
           </label>
-
         </div>
 
         {showNewJobForm && (
@@ -544,7 +732,7 @@ function App() {
 
             <div className="job-form-actions">
               <button type="submit" className="button">
-              {editingAppId ? "Update job" : "Save job"}
+                {editingAppId ? "Update job" : "Save job"}
               </button>
             </div>
           </form>
@@ -663,6 +851,7 @@ function App() {
                           <option value="Offer">Offer</option>
                           <option value="Rejected">Rejected</option>
                         </select>
+
                         <button
                           className="table-action"
                           onClick={() => handleEditApplication(app)}
